@@ -4542,17 +4542,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "offchain-worker"
-version = "4.0.0-dev"
+name = "offchain_worker"
+version = "0.1.0"
 dependencies = [
- "frame-benchmarking",
  "frame-support",
  "frame-system",
  "parity-scale-codec",
  "scale-info",
- "sp-core",
- "sp-io",
- "sp-runtime",
 ]
 
 [[package]]
