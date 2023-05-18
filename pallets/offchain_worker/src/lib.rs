@@ -43,10 +43,15 @@ pub mod pallet {
 	type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
+	type SubscriptionId = [u8; 16];
+
+	// TypeInfo macro forces to parse the underlying object into some JSON type. The Subscription type is generic over T,
+	// we don't want to include it in the TypeInfo generation step. That's why skip_type_params(T) is needed
 	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+	#[scale_info(skip_type_params(T))]
 	pub struct Subscription<T: Config> {
 		// unique identifier of the subscription
-		pub unique_id: [u8; 16],
+		pub unique_id: SubscriptionId,
 		// owner of the subscription
 		pub owner: T::AccountId,
 		// price for the subscription
@@ -65,5 +70,16 @@ pub mod pallet {
 	// OptionQuery - None is returned,
 	// ResultQuery - Err is returned.
 	#[pallet::storage]
-	pub(super) type SubscriptionCount<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub(super) type SubscriptionsCount<T: Config> = StorageValue<_, u64, ValueQuery>;
+
+	// Stores a map of subscription (its unique_id) to its properties
+	// The Twox64Concat is hashing algorithm used to store the map value.
+	#[pallet::storage]
+	pub(super) type SubscriptionMap<T: Config> =
+		StorageMap<_, Twox64Concat, SubscriptionId, Subscription<T>>;
+
+	// Maps user accounts to the subscriptions they are subscribed in.
+	#[pallet::storage]
+	pub(super) type ConsumerOfSubscriptions<T: Config> =
+		StorageMap<_, Twox64Concat, T::AccountId, BoundedVec<SubscriptionId, T::MaxSubscriptions>>;
 }
