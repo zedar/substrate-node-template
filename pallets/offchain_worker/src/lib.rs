@@ -6,7 +6,6 @@ pub use pallet::*;
 // Note: remove dev_mode before deploying in a production runtime.
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
-	use frame_support::pallet;
 	use frame_support::pallet_prelude::*;
 	use frame_support::traits::{Currency, Randomness};
 	use frame_system::pallet_prelude::*;
@@ -29,10 +28,13 @@ pub mod pallet {
 
 		#[pallet::constant]
 		type MaxSubscriptions: Get<u32>;
+
+		#[pallet::constant]
+		type MaxRegistrationUrlLength: Get<u32>;
 	}
 
 	// Payment type that can be either one time or recurrent
-	#[derive(Clone, Encode, Decode, PartialEq, Copy, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 	pub enum PaymentType {
 		OneTime,
 		Recurrent,
@@ -41,7 +43,7 @@ pub mod pallet {
 	type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
-	#[derive(Clone, Encode, Decode, PartialEq, Copy, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 	pub struct Subscription<T: Config> {
 		// unique identifier of the subscription
 		pub unique_id: [u8; 16],
@@ -54,6 +56,7 @@ pub mod pallet {
 		// url of where to register/revoke a subscription
 		// Vec<u8> represents a string in substrate
 		// pub registration_url: Vec<u8>,
+		pub registration_url: BoundedVec<u8, T::MaxRegistrationUrlLength>,
 	}
 
 	// Stores single value that is a number of  available subscriptions.
