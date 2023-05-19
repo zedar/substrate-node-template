@@ -1,0 +1,5 @@
+[toolchain]
+target="nightly"
+components = [ "rustfmt" ]
+targets = [ "wasm32-unknown-unknown" ]
+profile = "minimal"

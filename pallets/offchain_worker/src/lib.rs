@@ -23,12 +23,19 @@ pub mod pallet {
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
 		type Currency: Currency<Self::AccountId>;
-		// mapping of a subscription hash to the block number
-		type SubscriptionRandomness: Randomness<Self::Hash, Self::BlockNumber>;
 
+		// mapping of a feed hash to the block number
+		type FeedRandomness: Randomness<Self::Hash, Self::BlockNumber>;
+
+		// max number of created feeds. Each feed may have multiple subscriptions.
+		#[pallet::constant]
+		type MaxFeeds: Get<u32>;
+
+		// max number of subscriptions per account
 		#[pallet::constant]
 		type MaxSubscriptions: Get<u32>;
 
+		// max length of the subscription registration url
 		#[pallet::constant]
 		type MaxRegistrationUrlLength: Get<u32>;
 	}
@@ -43,15 +50,15 @@ pub mod pallet {
 	type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
-	type SubscriptionId = [u8; 16];
+	type FeedId = [u8; 16];
 
-	// TypeInfo macro forces to parse the underlying object into some JSON type. The Subscription type is generic over T,
+	// TypeInfo macro forces to parse the underlying object into some JSON type. The Feed type is generic over T,
 	// we don't want to include it in the TypeInfo generation step. That's why skip_type_params(T) is needed
 	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 	#[scale_info(skip_type_params(T))]
-	pub struct Subscription<T: Config> {
+	pub struct Feed<T: Config> {
 		// unique identifier of the subscription
-		pub unique_id: SubscriptionId,
+		pub unique_id: FeedId,
 		// owner of the subscription
 		pub owner: T::AccountId,
 		// price for the subscription
@@ -64,22 +71,39 @@ pub mod pallet {
 		pub registration_url: BoundedVec<u8, T::MaxRegistrationUrlLength>,
 	}
 
-	// Stores single value that is a number of  available subscriptions.
-	// The value is incremented each time new subscription is created.
+	// Stores single value that is a number of  available feeds.
+	// The value is incremented each time new feed is created.
 	// ValueQuery - if there is no value, the zero value is returned,
 	// OptionQuery - None is returned,
 	// ResultQuery - Err is returned.
 	#[pallet::storage]
-	pub(super) type SubscriptionsCount<T: Config> = StorageValue<_, u64, ValueQuery>;
+	pub(super) type FeedCount<T: Config> = StorageValue<_, u64, ValueQuery>;
 
-	// Stores a map of subscription (its unique_id) to its properties
+	// Stores a map of feeds (each with unique_id) to their properties
 	// The Twox64Concat is hashing algorithm used to store the map value.
 	#[pallet::storage]
-	pub(super) type SubscriptionMap<T: Config> =
-		StorageMap<_, Twox64Concat, SubscriptionId, Subscription<T>>;
+	pub(super) type Feeds<T: Config> = StorageMap<_, Twox64Concat, FeedId, Feed<T>>;
 
-	// Maps user accounts to the subscriptions they are subscribed in.
+	// Maps user accounts to the subscribed feeds
 	#[pallet::storage]
-	pub(super) type ConsumerOfSubscriptions<T: Config> =
-		StorageMap<_, Twox64Concat, T::AccountId, BoundedVec<SubscriptionId, T::MaxSubscriptions>>;
+	pub(super) type Subscriptions<T: Config> =
+		StorageMap<_, Twox64Concat, T::AccountId, BoundedVec<FeedId, T::MaxSubscriptions>>;
+
+	// create_subscription creates new unique subscription
+	// - create unique id
+	// - ensure that total number of subscriptions does not exceed the maximum allowed
+
+	#[pallet::error]
+	pub enum Error<T> {
+		// each feed must have a unique identifier
+		DuplicatedFeed,
+		// the total supply of feeds can't exceed `Config::MaxFeeds`
+		FeedsOverflow,
+		// a feed url can't exceed `Config::MaxRegistrationUrlLength`
+		RegistrationUrlTooLong,
+		// an account must subscribe only once to the feed
+		DuplicatedSubscription,
+		// an account can't exceed `Config::MaxSubscriptions`
+		MaxSubscriptionsExceeded,
+	}
 }
