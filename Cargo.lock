@@ -4543,7 +4543,7 @@ dependencies = [
 
 [[package]]
 name = "offchain_worker"
-version = "0.1.0"
+version = "0.1.0-dev"
 dependencies = [
  "frame-support",
  "frame-system",

@@ -8,12 +8,13 @@ pub use pallet::*;
 pub mod pallet {
 	use frame_support::{
 		pallet_prelude::*,
+		sp_std,
 		traits::{Currency, Randomness},
 	};
 	use frame_system::pallet_prelude::*;
+	use sp_std::prelude::*;
 
 	#[pallet::pallet]
-	#[pallet::generate_store(pub(super) trait Store)]
 	pub struct Pallet<T>(_);
 
 	// Defines generic data types that the pallet uses
@@ -118,6 +119,29 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		// runtime sends FeedCreated event when new feed has been successfully created
 		FeedCreated { feed: FeedId, owner: T::AccountId },
+	}
+
+	// Callable functions
+	#[pallet::call]
+	impl<T: Config> Pallet<T> {
+		// Create a new/unique feed.
+		#[pallet::weight(0)]
+		pub fn create_feed(
+			origin: OriginFor<T>,
+			payment: PaymentType,
+			url: Vec<u8>,
+		) -> DispatchResult {
+			// Make sure the caller is from the signed origin
+			let sender = ensure_signed(origin)?;
+
+			// Generate unique id for new feed
+			let feed_unique_id = Self::new_unique_id();
+
+			// Min new feed
+			Self::mint_feed(&sender, feed_unique_id, payment, url.as_slice())?;
+
+			Ok(())
+		}
 	}
 
 	// Pallet internal functions
