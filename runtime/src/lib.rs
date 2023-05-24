@@ -273,6 +273,18 @@ impl pallet_template::Config for Runtime {
 	type WeightInfo = pallet_template::weights::SubstrateWeight<Runtime>;
 }
 
+impl pallet_insecure_randomness_collective_flip::Config for Runtime {}
+
+/// Configure pallet-offchain-worker
+impl pallet_offchain_worker::Config for Runtime {
+	type RuntimeEvent = RuntimeEvent;
+	type Currency = Balances;
+	type MaxFeeds = frame_support::pallet_prelude::ConstU32<20>;
+	type MaxSubscriptions = frame_support::pallet_prelude::ConstU32<100>;
+	type MaxRegistrationUrlLength = frame_support::pallet_prelude::ConstU32<256>;
+	type FeedRandomness = RandomnessCollectiveFlip;
+}
+
 // Create the runtime by composing the FRAME pallets that were previously configured.
 construct_runtime!(
 	pub struct Runtime
@@ -290,6 +302,9 @@ construct_runtime!(
 		Sudo: pallet_sudo,
 		// Include the custom logic from the pallet-template in the runtime.
 		TemplateModule: pallet_template,
+
+		RandomnessCollectiveFlip: pallet_insecure_randomness_collective_flip,
+		OffchainWorkerModule: pallet_offchain_worker,
 	}
 );
 
