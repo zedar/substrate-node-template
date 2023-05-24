@@ -25,10 +25,13 @@ pub mod pallet {
 	// frame_system|frame_support types: AccountId, BlockNumber, Hash
 	#[pallet::config]
 	pub trait Config: frame_system::Config {
+		// the type used accross the runtime for emitting events
 		type RuntimeEvent: From<Event<Self>> + IsType<<Self as frame_system::Config>::RuntimeEvent>;
 
+		// the interface used to manage user balances
 		type Currency: Currency<Self::AccountId>;
 
+		// the interface used to get random values
 		// mapping of a feed hash to the block number
 		type FeedRandomness: Randomness<Self::Hash, Self::BlockNumber>;
 
@@ -56,6 +59,12 @@ pub mod pallet {
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
 	type FeedId = [u8; 16];
+
+	// Encode - serialization of a custom type to bytes
+	// Decode - deserialization of bytes into a custom type
+	// TypeInfo - information of a custom type to the runtime metodata
+	// MaxEncodedLen - ensures that types in the runtime are bounded in size
+	// RuntimeDebug - allow a type to be printed to the console
 
 	// TypeInfo macro forces to parse the underlying object into some JSON type. The Feed type is
 	// generic over T, we don't want to include it in the TypeInfo generation step. That's why

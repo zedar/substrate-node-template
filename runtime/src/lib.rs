@@ -279,8 +279,8 @@ impl pallet_insecure_randomness_collective_flip::Config for Runtime {}
 impl pallet_offchain_worker::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
-	type MaxFeeds = frame_support::pallet_prelude::ConstU32<20>;
-	type MaxSubscriptions = frame_support::pallet_prelude::ConstU32<100>;
+	type MaxFeeds = frame_support::pallet_prelude::ConstU32<10>;
+	type MaxSubscriptions = frame_support::pallet_prelude::ConstU32<20>;
 	type MaxRegistrationUrlLength = frame_support::pallet_prelude::ConstU32<256>;
 	type FeedRandomness = RandomnessCollectiveFlip;
 }
@@ -302,8 +302,8 @@ construct_runtime!(
 		Sudo: pallet_sudo,
 		// Include the custom logic from the pallet-template in the runtime.
 		TemplateModule: pallet_template,
-
 		RandomnessCollectiveFlip: pallet_insecure_randomness_collective_flip,
+		// Include custom logic from the pallet-offchain-worker in the runtime
 		OffchainWorkerModule: pallet_offchain_worker,
 	}
 );
