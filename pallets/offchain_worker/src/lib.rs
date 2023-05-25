@@ -8,6 +8,7 @@ pub use pallet::*;
 pub mod pallet {
 	use frame_support::{
 		pallet_prelude::*,
+		sp_runtime::DispatchResult,
 		sp_std,
 		traits::{Currency, Randomness},
 	};
@@ -59,8 +60,8 @@ pub mod pallet {
 	type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
-	// News feed unique id
-	type NewsFeedId = [u8; 16];
+	// Unique id of objects created by this pallet, e.g. news feed, subscription
+	type UniqueId = [u8; 16];
 
 	// Encode - serialization of a custom type to bytes
 	// Decode - deserialization of bytes into a custom type
@@ -74,8 +75,8 @@ pub mod pallet {
 	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 	#[scale_info(skip_type_params(T))]
 	pub struct NewsFeed<T: Config> {
-		// unique identifier of the subscription
-		pub unique_id: NewsFeedId,
+		// unique identifier of the news feed
+		pub id: UniqueId,
 		// owner of the subscription
 		pub owner: T::AccountId,
 		// price for the subscription. None assumes not for sale/use.
@@ -86,6 +87,18 @@ pub mod pallet {
 		// Vec<u8> represents a string in substrate
 		// pub registration_url: Vec<u8>,
 		pub registration_url: BoundedVec<u8, T::MaxRegistrationUrlLength>,
+	}
+
+	// Represents account subscription of the news feed
+	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+	#[scale_info(skip_type_params(T))]
+	pub struct Subscription<T: Config> {
+		// unique identifier of the news feed subscription
+		pub id: UniqueId,
+		// unique identifier of the subscribed news feed
+		pub news_feed_id: UniqueId,
+		// subscription owner
+		pub owner: T::AccountId,
 	}
 
 	// Stores single value that is a number of  available news feeds.
@@ -99,7 +112,7 @@ pub mod pallet {
 	// Stores a map of feeds (each with unique_id) to their properties
 	// The Twox64Concat is hashing algorithm used to store the map value.
 	#[pallet::storage]
-	pub(super) type NewsFeeds<T: Config> = StorageMap<_, Twox64Concat, NewsFeedId, NewsFeed<T>>;
+	pub(super) type NewsFeeds<T: Config> = StorageMap<_, Twox64Concat, UniqueId, NewsFeed<T>>;
 
 	// Tracks the news feeds subscribed by each account
 	#[pallet::storage]
@@ -107,7 +120,7 @@ pub mod pallet {
 		_,
 		Twox64Concat,
 		T::AccountId,
-		BoundedVec<NewsFeedId, T::MaxSubscriptions>,
+		BoundedVec<Subscription<T>, T::MaxSubscriptions>,
 		ValueQuery,
 	>;
 
@@ -134,7 +147,7 @@ pub mod pallet {
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		// runtime sends FeedCreated event when new feed has been successfully created
-		NewsFeedCreated { feed: NewsFeedId, owner: T::AccountId },
+		NewsFeedCreated { feed: UniqueId, owner: T::AccountId },
 	}
 
 	// Callable functions
@@ -142,7 +155,7 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		// Create a new/unique feed.
 		#[pallet::weight(0)]
-		pub fn create_newsfeed(
+		pub fn create_news_feed(
 			origin: OriginFor<T>,
 			payment: PaymentType,
 			url: Vec<u8>,
@@ -151,10 +164,10 @@ pub mod pallet {
 			let sender = ensure_signed(origin)?;
 
 			// Generate unique id for new feed
-			let feed_unique_id = Self::new_unique_id();
+			let news_feed_id = Self::new_unique_id();
 
 			// Min new feed
-			Self::mint_newsfeed(&sender, feed_unique_id, payment, url.as_slice())?;
+			Self::mint_news_feed(&sender, news_feed_id, payment, url.as_slice())?;
 
 			Ok(())
 		}
@@ -163,7 +176,7 @@ pub mod pallet {
 	// Pallet internal functions
 	impl<T: Config> Pallet<T> {
 		// generate unique id for a new feed
-		fn new_unique_id() -> NewsFeedId {
+		fn new_unique_id() -> UniqueId {
 			// create randomness
 			let random = T::NewsFeedRandomness::random(&b"unique_id"[..]).0;
 			// randomness payload enables that multiple feeds can be created in the same block
@@ -176,16 +189,17 @@ pub mod pallet {
 			frame_support::Hashable::blake2_128(&encoded_payload)
 		}
 
-		// Mint/create new feed
-		pub fn mint_newsfeed(
+		// If the function needs ownership, you should pass by value. If the function only needs a reference, you should pass by reference.
+		// Mint/create new feed. Minting means creating a new news feed on the blockchain.
+		fn mint_news_feed(
 			owner: &T::AccountId,
-			unique_id: NewsFeedId,
+			news_feed_id: UniqueId,
 			payment: PaymentType,
 			url: &[u8],
-		) -> Result<NewsFeedId, DispatchError> {
+		) -> DispatchResult {
 			// create new feed
 			let feed = NewsFeed::<T> {
-				unique_id,
+				id: news_feed_id,
 				owner: owner.clone(),
 				fee: None,
 				payment_type: payment,
@@ -196,7 +210,7 @@ pub mod pallet {
 			};
 
 			// check that feed does not exist in the storage map
-			ensure!(!NewsFeeds::<T>::contains_key(&feed.unique_id), Error::<T>::DuplicatedNewsFeed);
+			ensure!(!NewsFeeds::<T>::contains_key(&feed.id), Error::<T>::DuplicatedNewsFeed);
 
 			// check that a new feed does not exceed max available feeds
 			let count = NewsFeedCount::<T>::get();
@@ -204,16 +218,20 @@ pub mod pallet {
 			ensure!(new_count <= T::MaxNewsFeeds::get(), Error::<T>::NewsFeedsOverflow);
 
 			// write new feed to the storage and update the count
-			NewsFeeds::<T>::insert(feed.unique_id, feed);
+			NewsFeeds::<T>::insert(feed.id, feed);
 			NewsFeedCount::<T>::put(new_count);
 
 			// deposit the event
 			Self::deposit_event(Event::<T>::NewsFeedCreated {
-				feed: unique_id,
+				feed: news_feed_id,
 				owner: owner.clone(),
 			});
 
-			Ok(unique_id)
+			Ok(())
+		}
+
+		fn do_news_feeds_transfer(news_feed_id: UniqueId, to: &T::AccountId) -> DispatchResult {
+			Ok(())
 		}
 	}
 }
