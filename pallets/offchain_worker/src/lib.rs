@@ -40,9 +40,13 @@ pub mod pallet {
 		#[pallet::constant]
 		type MaxNewsFeeds: Get<u32>;
 
+		// max number of owned subscriptions
+		#[pallet::constant]
+		type MaxOwnedNewsFeeds: Get<u32>;
+
 		// max number of subscriptions per account
 		#[pallet::constant]
-		type MaxSubscriptions: Get<u32>;
+		type MaxOwnedSubscriptions: Get<u32>;
 
 		// max length of the subscription registration url
 		#[pallet::constant]
@@ -96,7 +100,7 @@ pub mod pallet {
 		// unique identifier of the news feed subscription
 		pub id: UniqueId,
 		// unique identifier of the subscribed news feed
-		pub news_feed_id: UniqueId,
+		pub newsfeed_id: UniqueId,
 		// subscription owner
 		pub owner: T::AccountId,
 	}
@@ -114,13 +118,23 @@ pub mod pallet {
 	#[pallet::storage]
 	pub(super) type NewsFeeds<T: Config> = StorageMap<_, Twox64Concat, UniqueId, NewsFeed<T>>;
 
+	// Tracks who owns what news feeds
+	#[pallet::storage]
+	pub(super) type OwnerOfNewsFeeds<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		T::AccountId,
+		BoundedVec<UniqueId, T::MaxOwnedNewsFeeds>,
+		ValueQuery,
+	>;
+
 	// Tracks the news feeds subscribed by each account
 	#[pallet::storage]
 	pub(super) type Subscriptions<T: Config> = StorageMap<
 		_,
 		Twox64Concat,
 		T::AccountId,
-		BoundedVec<Subscription<T>, T::MaxSubscriptions>,
+		BoundedVec<Subscription<T>, T::MaxOwnedSubscriptions>,
 		ValueQuery,
 	>;
 
@@ -134,6 +148,12 @@ pub mod pallet {
 		DuplicatedNewsFeed,
 		// the total supply of feeds can't exceed `Config::MaxFeeds`
 		NewsFeedsOverflow,
+		// exceeded maximum of news feed assigned to an owner
+		MaxNewsFeedsOwned,
+		// news feed not found
+		NewsFeedNotFound,
+		// owner and target are the same
+		TransferToSelf,
 		// a feed url can't exceed `Config::MaxRegistrationUrlLength`
 		RegistrationUrlTooLong,
 		// an account must subscribe only once to the feed
@@ -155,7 +175,7 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		// Create a new/unique feed.
 		#[pallet::weight(0)]
-		pub fn create_news_feed(
+		pub fn create_newsfeed(
 			origin: OriginFor<T>,
 			payment: PaymentType,
 			url: Vec<u8>,
@@ -164,10 +184,10 @@ pub mod pallet {
 			let sender = ensure_signed(origin)?;
 
 			// Generate unique id for new feed
-			let news_feed_id = Self::new_unique_id();
+			let newsfeed_id = Self::new_unique_id();
 
 			// Min new feed
-			Self::mint_news_feed(&sender, news_feed_id, payment, url.as_slice())?;
+			Self::mint_newsfeed(&sender, newsfeed_id, payment, url.as_slice())?;
 
 			Ok(())
 		}
@@ -191,15 +211,17 @@ pub mod pallet {
 
 		// If the function needs ownership, you should pass by value. If the function only needs a reference, you should pass by reference.
 		// Mint/create new feed. Minting means creating a new news feed on the blockchain.
-		fn mint_news_feed(
+		// UniqueId is a fixed size array of u8 so it automatically implements Copy and Clone
+		// traits. So it is passed by value == copy.
+		fn mint_newsfeed(
 			owner: &T::AccountId,
-			news_feed_id: UniqueId,
+			newsfeed_id: UniqueId,
 			payment: PaymentType,
 			url: &[u8],
 		) -> DispatchResult {
 			// create new feed
 			let feed = NewsFeed::<T> {
-				id: news_feed_id,
+				id: newsfeed_id,
 				owner: owner.clone(),
 				fee: None,
 				payment_type: payment,
@@ -217,20 +239,39 @@ pub mod pallet {
 			let new_count = count.checked_add(1).ok_or(Error::<T>::NewsFeedsOverflow)?;
 			ensure!(new_count <= T::MaxNewsFeeds::get(), Error::<T>::NewsFeedsOverflow);
 
+			// let mut owned_newsfeeds = OwnerOfNewsFeeds::<T>::get(owner);
+			OwnerOfNewsFeeds::<T>::try_append(owner, newsfeed_id)
+				.map_err(|_| Error::<T>::MaxNewsFeedsOwned)?;
+
 			// write new feed to the storage and update the count
 			NewsFeeds::<T>::insert(feed.id, feed);
 			NewsFeedCount::<T>::put(new_count);
 
 			// deposit the event
 			Self::deposit_event(Event::<T>::NewsFeedCreated {
-				feed: news_feed_id,
+				feed: newsfeed_id,
 				owner: owner.clone(),
 			});
 
 			Ok(())
 		}
 
-		fn do_news_feeds_transfer(news_feed_id: UniqueId, to: &T::AccountId) -> DispatchResult {
+		// Transfer news feed from a current owner to the new owner
+		// - News feed must exists (must be registered)
+		// - News feed can't be tranferred to its owner
+		// - News feed can't be transferred to an account that already has the maximum news feeds
+		// allowed
+		fn do_newsfeed_transfer(newsfeed_id: UniqueId, to: T::AccountId) -> DispatchResult {
+			// get the news feed
+			let mut newsfeed =
+				NewsFeeds::<T>::get(&newsfeed_id).ok_or(Error::<T>::NewsFeedNotFound)?;
+
+			let from = newsfeed.owner;
+
+			ensure!(from != to, Error::<T>::TransferToSelf);
+
+			// get news feeds owned by
+
 			Ok(())
 		}
 	}

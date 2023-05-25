@@ -4,5 +4,5 @@ rustflags = ["-C", "link-arg=-fuse-ld=/usr/local/bin/zld"]
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]
 
-[build]
-rustc-wrapper = "/usr/local/bin/sccache"
+# [build]
+# rustc-wrapper = "/usr/local/bin/sccache"

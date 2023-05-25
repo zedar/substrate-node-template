@@ -279,8 +279,9 @@ impl pallet_insecure_randomness_collective_flip::Config for Runtime {}
 impl pallet_offchain_worker::Config for Runtime {
 	type RuntimeEvent = RuntimeEvent;
 	type Currency = Balances;
-	type MaxNewsFeeds = frame_support::pallet_prelude::ConstU32<10>;
-	type MaxSubscriptions = frame_support::pallet_prelude::ConstU32<20>;
+	type MaxNewsFeeds = frame_support::pallet_prelude::ConstU32<100>;
+	type MaxOwnedNewsFeeds = frame_support::pallet_prelude::ConstU32<10>;
+	type MaxOwnedSubscriptions = frame_support::pallet_prelude::ConstU32<20>;
 	type MaxRegistrationUrlLength = frame_support::pallet_prelude::ConstU32<256>;
 	type NewsFeedRandomness = RandomnessCollectiveFlip;
 }
