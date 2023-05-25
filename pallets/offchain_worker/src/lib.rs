@@ -33,11 +33,11 @@ pub mod pallet {
 
 		// the interface used to get random values
 		// mapping of a feed hash to the block number
-		type FeedRandomness: Randomness<Self::Hash, Self::BlockNumber>;
+		type NewsFeedRandomness: Randomness<Self::Hash, Self::BlockNumber>;
 
 		// max number of created feeds. Each feed may have multiple subscriptions.
 		#[pallet::constant]
-		type MaxFeeds: Get<u32>;
+		type MaxNewsFeeds: Get<u32>;
 
 		// max number of subscriptions per account
 		#[pallet::constant]
@@ -49,16 +49,18 @@ pub mod pallet {
 	}
 
 	// Payment type that can be either one time or recurrent
-	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
+	#[derive(Clone, Copy, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 	pub enum PaymentType {
 		OneTime,
 		Recurrent,
 	}
 
+	// Allows easy access to the pallet's Balance type.
 	type BalanceOf<T> =
 		<<T as Config>::Currency as Currency<<T as frame_system::Config>::AccountId>>::Balance;
 
-	type FeedId = [u8; 16];
+	// News feed unique id
+	type NewsFeedId = [u8; 16];
 
 	// Encode - serialization of a custom type to bytes
 	// Decode - deserialization of bytes into a custom type
@@ -66,17 +68,17 @@ pub mod pallet {
 	// MaxEncodedLen - ensures that types in the runtime are bounded in size
 	// RuntimeDebug - allow a type to be printed to the console
 
-	// TypeInfo macro forces to parse the underlying object into some JSON type. The Feed type is
+	// TypeInfo macro forces to parse the underlying object into some JSON type. The Newseed type is
 	// generic over T, we don't want to include it in the TypeInfo generation step. That's why
 	// skip_type_params(T) is needed
 	#[derive(Clone, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 	#[scale_info(skip_type_params(T))]
-	pub struct Feed<T: Config> {
+	pub struct NewsFeed<T: Config> {
 		// unique identifier of the subscription
-		pub unique_id: FeedId,
+		pub unique_id: NewsFeedId,
 		// owner of the subscription
 		pub owner: T::AccountId,
-		// price for the subscription
+		// price for the subscription. None assumes not for sale/use.
 		pub fee: Option<BalanceOf<T>>,
 		// payment type
 		pub payment_type: PaymentType,
@@ -86,23 +88,28 @@ pub mod pallet {
 		pub registration_url: BoundedVec<u8, T::MaxRegistrationUrlLength>,
 	}
 
-	// Stores single value that is a number of  available feeds.
-	// The value is incremented each time new feed is created.
+	// Stores single value that is a number of  available news feeds.
+	// The value is incremented each time news feed is created.
 	// ValueQuery - if there is no value, the zero value is returned,
 	// OptionQuery - None is returned,
 	// ResultQuery - Err is returned.
 	#[pallet::storage]
-	pub(super) type FeedCount<T: Config> = StorageValue<_, u32, ValueQuery>;
+	pub(super) type NewsFeedCount<T: Config> = StorageValue<_, u32, ValueQuery>;
 
 	// Stores a map of feeds (each with unique_id) to their properties
 	// The Twox64Concat is hashing algorithm used to store the map value.
 	#[pallet::storage]
-	pub(super) type Feeds<T: Config> = StorageMap<_, Twox64Concat, FeedId, Feed<T>>;
+	pub(super) type NewsFeeds<T: Config> = StorageMap<_, Twox64Concat, NewsFeedId, NewsFeed<T>>;
 
-	// Maps user accounts to the subscribed feeds
+	// Tracks the news feeds subscribed by each account
 	#[pallet::storage]
-	pub(super) type Subscriptions<T: Config> =
-		StorageMap<_, Twox64Concat, T::AccountId, BoundedVec<FeedId, T::MaxSubscriptions>>;
+	pub(super) type Subscriptions<T: Config> = StorageMap<
+		_,
+		Twox64Concat,
+		T::AccountId,
+		BoundedVec<NewsFeedId, T::MaxSubscriptions>,
+		ValueQuery,
+	>;
 
 	// create_subscription creates new unique subscription
 	// - create unique id
@@ -111,9 +118,9 @@ pub mod pallet {
 	#[pallet::error]
 	pub enum Error<T> {
 		// each feed must have a unique identifier
-		DuplicatedFeed,
+		DuplicatedNewsFeed,
 		// the total supply of feeds can't exceed `Config::MaxFeeds`
-		FeedsOverflow,
+		NewsFeedsOverflow,
 		// a feed url can't exceed `Config::MaxRegistrationUrlLength`
 		RegistrationUrlTooLong,
 		// an account must subscribe only once to the feed
@@ -127,7 +134,7 @@ pub mod pallet {
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		// runtime sends FeedCreated event when new feed has been successfully created
-		FeedCreated { feed: FeedId, owner: T::AccountId },
+		NewsFeedCreated { feed: NewsFeedId, owner: T::AccountId },
 	}
 
 	// Callable functions
@@ -135,7 +142,7 @@ pub mod pallet {
 	impl<T: Config> Pallet<T> {
 		// Create a new/unique feed.
 		#[pallet::weight(0)]
-		pub fn create_feed(
+		pub fn create_newsfeed(
 			origin: OriginFor<T>,
 			payment: PaymentType,
 			url: Vec<u8>,
@@ -147,7 +154,7 @@ pub mod pallet {
 			let feed_unique_id = Self::new_unique_id();
 
 			// Min new feed
-			Self::mint_feed(&sender, feed_unique_id, payment, url.as_slice())?;
+			Self::mint_newsfeed(&sender, feed_unique_id, payment, url.as_slice())?;
 
 			Ok(())
 		}
@@ -156,9 +163,9 @@ pub mod pallet {
 	// Pallet internal functions
 	impl<T: Config> Pallet<T> {
 		// generate unique id for a new feed
-		fn new_unique_id() -> FeedId {
+		fn new_unique_id() -> NewsFeedId {
 			// create randomness
-			let random = T::FeedRandomness::random(&b"unique_id"[..]).0;
+			let random = T::NewsFeedRandomness::random(&b"unique_id"[..]).0;
 			// randomness payload enables that multiple feeds can be created in the same block
 			let unique_payload = (
 				random,
@@ -170,14 +177,14 @@ pub mod pallet {
 		}
 
 		// Mint/create new feed
-		pub fn mint_feed(
+		pub fn mint_newsfeed(
 			owner: &T::AccountId,
-			unique_id: FeedId,
+			unique_id: NewsFeedId,
 			payment: PaymentType,
 			url: &[u8],
-		) -> Result<FeedId, DispatchError> {
+		) -> Result<NewsFeedId, DispatchError> {
 			// create new feed
-			let feed = Feed::<T> {
+			let feed = NewsFeed::<T> {
 				unique_id,
 				owner: owner.clone(),
 				fee: None,
@@ -189,19 +196,22 @@ pub mod pallet {
 			};
 
 			// check that feed does not exist in the storage map
-			ensure!(!Feeds::<T>::contains_key(&feed.unique_id), Error::<T>::DuplicatedFeed);
+			ensure!(!NewsFeeds::<T>::contains_key(&feed.unique_id), Error::<T>::DuplicatedNewsFeed);
 
 			// check that a new feed does not exceed max available feeds
-			let count = FeedCount::<T>::get();
-			let new_count = count.checked_add(1).ok_or(Error::<T>::FeedsOverflow)?;
-			ensure!(new_count <= T::MaxFeeds::get(), Error::<T>::FeedsOverflow);
+			let count = NewsFeedCount::<T>::get();
+			let new_count = count.checked_add(1).ok_or(Error::<T>::NewsFeedsOverflow)?;
+			ensure!(new_count <= T::MaxNewsFeeds::get(), Error::<T>::NewsFeedsOverflow);
 
 			// write new feed to the storage and update the count
-			Feeds::<T>::insert(feed.unique_id, feed);
-			FeedCount::<T>::put(new_count);
+			NewsFeeds::<T>::insert(feed.unique_id, feed);
+			NewsFeedCount::<T>::put(new_count);
 
 			// deposit the event
-			Self::deposit_event(Event::<T>::FeedCreated { feed: unique_id, owner: owner.clone() });
+			Self::deposit_event(Event::<T>::NewsFeedCreated {
+				feed: unique_id,
+				owner: owner.clone(),
+			});
 
 			Ok(unique_id)
 		}
