@@ -7,8 +7,7 @@ pub use pallet::*;
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
 	use frame_support::{
-		pallet_prelude::*,
-		sp_runtime::DispatchResult,
+		pallet_prelude::{DispatchResult, *},
 		sp_std,
 		traits::{Currency, Randomness},
 	};
@@ -146,6 +145,8 @@ pub mod pallet {
 	pub enum Error<T> {
 		// each feed must have a unique identifier
 		DuplicatedNewsFeed,
+		// an account is not an owner of the newsfeed
+		NotNewsFeedOwner,
 		// the total supply of feeds can't exceed `Config::MaxFeeds`
 		NewsFeedsOverflow,
 		// exceeded maximum of news feed assigned to an owner
@@ -168,6 +169,8 @@ pub mod pallet {
 	pub enum Event<T: Config> {
 		// runtime sends FeedCreated event when new feed has been successfully created
 		NewsFeedCreated { feed: UniqueId, owner: T::AccountId },
+		// runtime sends NewsFeed transfered event when NewsFeed changed the ownership
+		NewsFeedTransferred { newsfeed: UniqueId, from: T::AccountId, to: T::AccountId },
 	}
 
 	// Callable functions
@@ -188,6 +191,25 @@ pub mod pallet {
 
 			// Min new feed
 			Self::mint_newsfeed(&sender, newsfeed_id, payment, url.as_slice())?;
+
+			Ok(())
+		}
+
+		// Transfer a newsfeed to another account.
+		// Only signed owner of the newsfeed can do it
+		#[pallet::weight(0)]
+		pub fn transfer_newsfeed(
+			origin: OriginFor<T>,
+			to: T::AccountId,
+			newsfeed_id: UniqueId,
+		) -> DispatchResult {
+			// Ensure that the caller (origin) is from a signed origin
+			let from = ensure_signed(origin)?;
+			let newsfeed = NewsFeeds::<T>::get(&newsfeed_id).ok_or(Error::<T>::NewsFeedNotFound)?;
+
+			ensure!(from == newsfeed.owner, Error::<T>::NotNewsFeedOwner);
+
+			Self::do_newsfeed_transfer(newsfeed_id, to)?;
 
 			Ok(())
 		}
@@ -262,15 +284,36 @@ pub mod pallet {
 		// - News feed can't be transferred to an account that already has the maximum news feeds
 		// allowed
 		fn do_newsfeed_transfer(newsfeed_id: UniqueId, to: T::AccountId) -> DispatchResult {
-			// get the news feed
+			// get the news feed. News feed must exist
 			let mut newsfeed =
 				NewsFeeds::<T>::get(&newsfeed_id).ok_or(Error::<T>::NewsFeedNotFound)?;
 
+			// News feed can't be transferred to its owner
 			let from = newsfeed.owner;
-
 			ensure!(from != to, Error::<T>::TransferToSelf);
 
-			// get news feeds owned by
+			// get news feeds owned by the from account
+			let mut from_owned = OwnerOfNewsFeeds::<T>::get(&from);
+			// remove news feed from the owned by the from account
+			if let Some(ind) = from_owned.iter().position(|&id| id == newsfeed_id) {
+				from_owned.swap_remove(ind);
+			} else {
+				return Err(Error::<T>::NewsFeedNotFound.into());
+			}
+
+			// add news feed to the vector owned by the `to` account
+			let mut to_owned = OwnerOfNewsFeeds::<T>::get(&to);
+			to_owned.try_push(newsfeed_id).map_err(|_| Error::<T>::MaxNewsFeedsOwned)?;
+
+			// replace news feed owner with `to` account
+			newsfeed.owner = to.clone();
+
+			// write updates to the storage
+			NewsFeeds::<T>::insert(newsfeed_id, newsfeed);
+			OwnerOfNewsFeeds::<T>::insert(&to, to_owned);
+			OwnerOfNewsFeeds::<T>::insert(&from, from_owned);
+
+			Self::deposit_event(Event::NewsFeedTransferred { newsfeed: newsfeed_id, from, to });
 
 			Ok(())
 		}
