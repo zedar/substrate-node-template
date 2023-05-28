@@ -305,7 +305,7 @@ construct_runtime!(
 		TemplateModule: pallet_template,
 		RandomnessCollectiveFlip: pallet_insecure_randomness_collective_flip,
 		// Include custom logic from the pallet-offchain-worker in the runtime
-		OffchainWorkerModule: pallet_offchain_worker,
+		NewsFeedSubscriptions: pallet_offchain_worker,
 	}
 );
 

@@ -7,7 +7,7 @@ pub use pallet::*;
 #[frame_support::pallet(dev_mode)]
 pub mod pallet {
 	use frame_support::{
-		pallet_prelude::{DispatchResult, *},
+		pallet_prelude::*,
 		sp_std,
 		traits::{Currency, Randomness},
 	};
@@ -56,7 +56,6 @@ pub mod pallet {
 	#[derive(Clone, Copy, Encode, Decode, PartialEq, TypeInfo, RuntimeDebug, MaxEncodedLen)]
 	pub enum PaymentType {
 		OneTime,
-		Recurrent,
 	}
 
 	// Allows easy access to the pallet's Balance type.
@@ -82,8 +81,10 @@ pub mod pallet {
 		pub id: UniqueId,
 		// owner of the subscription
 		pub owner: T::AccountId,
-		// price for the subscription. None assumes not for sale/use.
-		pub fee: Option<BalanceOf<T>>,
+		// fee taken when an account subscribes to the news feed. None assumes subscription not allowed.
+		pub subscribe_fee: Option<BalanceOf<T>>,
+		// fee taken when an account unsubscribes from the news feed
+		pub unsubscribe_fee: Option<BalanceOf<T>>,
 		// payment type
 		pub payment_type: PaymentType,
 		// url of where to register/revoke a subscription
@@ -161,6 +162,10 @@ pub mod pallet {
 		DuplicatedSubscription,
 		// an account can't exceed `Config::MaxSubscriptions`
 		MaxSubscriptionsExceeded,
+		// an account can't subscribe to a given news feed
+		SubscriptionNotAllowed,
+		// subscription is not assigned to a given account
+		SubscriptionNotFound,
 	}
 
 	// generate_deposit generates a helper function on Pallet that handles event depositing/sending
@@ -168,9 +173,52 @@ pub mod pallet {
 	#[pallet::generate_deposit(pub(super) fn deposit_event)]
 	pub enum Event<T: Config> {
 		// runtime sends FeedCreated event when new feed has been successfully created
-		NewsFeedCreated { feed: UniqueId, owner: T::AccountId },
+		NewsFeedCreated {
+			newsfeed: UniqueId,
+			owner: T::AccountId,
+		},
 		// runtime sends NewsFeed transfered event when NewsFeed changed the ownership
-		NewsFeedTransferred { newsfeed: UniqueId, from: T::AccountId, to: T::AccountId },
+		NewsFeedTransferred {
+			newsfeed: UniqueId,
+			from: T::AccountId,
+			to: T::AccountId,
+		},
+		// runtime sends NewsFeed price set event when signed owner sets price
+		NewsFeedPriceSet {
+			newsfeed: UniqueId,
+			subscribe_fee: Option<BalanceOf<T>>,
+			unsubscribe_fee: Option<BalanceOf<T>>,
+		},
+		// runtime sends NewsFeed subscription paid event on successful payment
+		NewsFeedSubscribeFeePaid {
+			subscriber: T::AccountId,
+			owner: T::AccountId,
+			newsfeed: UniqueId,
+			price: BalanceOf<T>,
+		},
+		// runtime sends NewsFeed unsubscribe fee paid event on successful payment
+		NewsFeedUnsubscribeFeePaid {
+			subscriber: T::AccountId,
+			owner: T::AccountId,
+			subscription: UniqueId,
+			price: BalanceOf<T>,
+		},
+		// runtime sends NewsFeed unsubscribe fee paid event on successful payment
+		NewsFeedNoUnsubscribeFee {
+			subscriber: T::AccountId,
+			subscription: UniqueId,
+			newsfeed: UniqueId,
+		},
+		// runtime sends NewsFeed subscribed event on successful subscription
+		NewsFeedSubscribed {
+			newsfeed: UniqueId,
+			subscriber: T::AccountId,
+		},
+		// runtime sends NewsFeed unsubscribed event on successful subscription cancellation
+		NewsFeedUnsubscribed {
+			newsfeed: UniqueId,
+			subscriber: T::AccountId,
+		},
 	}
 
 	// Callable functions
@@ -203,7 +251,6 @@ pub mod pallet {
 			to: T::AccountId,
 			newsfeed_id: UniqueId,
 		) -> DispatchResult {
-			// Ensure that the caller (origin) is from a signed origin
 			let from = ensure_signed(origin)?;
 			let newsfeed = NewsFeeds::<T>::get(&newsfeed_id).ok_or(Error::<T>::NewsFeedNotFound)?;
 
@@ -211,6 +258,65 @@ pub mod pallet {
 
 			Self::do_newsfeed_transfer(newsfeed_id, to)?;
 
+			Ok(())
+		}
+
+		// Sets the price for a news feed.
+		// Only signed owner is able to set a price.
+		// If price is set to None nobody is able to subscribe to the news feed
+		#[pallet::weight(0)]
+		pub fn set_fees_newsfeed(
+			origin: OriginFor<T>,
+			newsfeed_id: UniqueId,
+			subscribe_fee: Option<BalanceOf<T>>,
+			unsubscribe_fee: Option<BalanceOf<T>>,
+		) -> DispatchResult {
+			// Make sure the caller is from the signed origin
+			let caller = ensure_signed(origin)?;
+
+			// ensure the news feed exists and is owned by the caller
+			let mut newsfeed =
+				NewsFeeds::<T>::get(&newsfeed_id).ok_or(Error::<T>::NewsFeedNotFound)?;
+			ensure!(newsfeed.owner == caller, Error::<T>::NotNewsFeedOwner);
+
+			newsfeed.subscribe_fee = subscribe_fee;
+			newsfeed.unsubscribe_fee = unsubscribe_fee;
+			NewsFeeds::<T>::insert(&newsfeed_id, newsfeed);
+
+			Self::deposit_event(Event::<T>::NewsFeedPriceSet {
+				newsfeed: newsfeed_id,
+				subscribe_fee,
+				unsubscribe_fee,
+			});
+
+			Ok(())
+		}
+
+		// Subscribe a news feed. If newsfeed is active (price is not None) a price is transfered from the caller account to the news feed owner account
+		#[pallet::weight(0)]
+		pub fn subscribe_newsfeed(origin: OriginFor<T>, newsfeed_id: UniqueId) -> DispatchResult {
+			// Ensure the caller is from a signed origin
+			let subscriber = ensure_signed(origin)?;
+
+			// Generate unique id for the subscription
+			let subscription_id = Self::new_unique_id();
+
+			// Subscribe to the news feed
+			Self::do_subscribe(subscription_id, newsfeed_id, subscriber)?;
+
+			Ok(())
+		}
+
+		// Cancells subscription to a news feed.
+		#[pallet::weight(0)]
+		pub fn unsubscribe_newsfeed(
+			origin: OriginFor<T>,
+			subscription_id: UniqueId,
+		) -> DispatchResult {
+			// Ensure the caller is from a signed origin
+			let subscriber = ensure_signed(origin)?;
+
+			Self::do_unsubscribe(subscription_id, subscriber)?;
 			Ok(())
 		}
 	}
@@ -245,7 +351,8 @@ pub mod pallet {
 			let feed = NewsFeed::<T> {
 				id: newsfeed_id,
 				owner: owner.clone(),
-				fee: None,
+				subscribe_fee: None,
+				unsubscribe_fee: None,
 				payment_type: payment,
 				registration_url: BoundedVec::<u8, T::MaxRegistrationUrlLength>::try_from(
 					url.to_vec(),
@@ -261,7 +368,6 @@ pub mod pallet {
 			let new_count = count.checked_add(1).ok_or(Error::<T>::NewsFeedsOverflow)?;
 			ensure!(new_count <= T::MaxNewsFeeds::get(), Error::<T>::NewsFeedsOverflow);
 
-			// let mut owned_newsfeeds = OwnerOfNewsFeeds::<T>::get(owner);
 			OwnerOfNewsFeeds::<T>::try_append(owner, newsfeed_id)
 				.map_err(|_| Error::<T>::MaxNewsFeedsOwned)?;
 
@@ -271,7 +377,7 @@ pub mod pallet {
 
 			// deposit the event
 			Self::deposit_event(Event::<T>::NewsFeedCreated {
-				feed: newsfeed_id,
+				newsfeed: newsfeed_id,
 				owner: owner.clone(),
 			});
 
@@ -307,6 +413,9 @@ pub mod pallet {
 
 			// replace news feed owner with `to` account
 			newsfeed.owner = to.clone();
+			// set fees to None which means new subscriptions are not allowed
+			newsfeed.subscribe_fee = None;
+			newsfeed.unsubscribe_fee = None;
 
 			// write updates to the storage
 			NewsFeeds::<T>::insert(newsfeed_id, newsfeed);
@@ -314,6 +423,117 @@ pub mod pallet {
 			OwnerOfNewsFeeds::<T>::insert(&from, from_owned);
 
 			Self::deposit_event(Event::NewsFeedTransferred { newsfeed: newsfeed_id, from, to });
+
+			Ok(())
+		}
+
+		fn do_subscribe(
+			subscription_id: UniqueId,
+			newsfeed_id: UniqueId,
+			to: T::AccountId,
+		) -> DispatchResult {
+			// Ensure that the news feed exists
+			let newsfeed = NewsFeeds::<T>::get(newsfeed_id).ok_or(Error::<T>::NewsFeedNotFound)?;
+
+			// Get subscriptions owned by `to` account
+			let mut to_owned = Subscriptions::<T>::get(to.clone());
+
+			// Ensure that `to` account is not an owner of the news feed
+			ensure!(newsfeed.owner != to, Error::<T>::SubscriptionNotAllowed);
+
+			// Ensure that `to` account has not yet subscribed the news feed
+			ensure!(
+				!to_owned.iter().any(|s| s.newsfeed_id == newsfeed_id),
+				Error::<T>::DuplicatedSubscription
+			);
+
+			// Create new subscription
+			let subscription =
+				Subscription::<T> { id: subscription_id, newsfeed_id, owner: to.clone() };
+			// Try to push new subscription into the vector owned by the `to` account
+			to_owned
+				.try_push(subscription)
+				.map_err(|_| Error::<T>::MaxSubscriptionsExceeded)?;
+
+			// If news feed is not allowed for sale, return an error.
+			// Otherwise transfer initial one-time payment
+			if let Some(price) = newsfeed.subscribe_fee {
+				// Transfer the amount from subscriber to the newsfeed owner
+				T::Currency::transfer(
+					&to,
+					&newsfeed.owner,
+					price,
+					frame_support::traits::ExistenceRequirement::KeepAlive,
+				)?;
+
+				Self::deposit_event(Event::<T>::NewsFeedSubscribeFeePaid {
+					subscriber: to.clone(),
+					owner: newsfeed.owner,
+					newsfeed: newsfeed.id,
+					price,
+				});
+			} else {
+				return Err(Error::<T>::SubscriptionNotAllowed.into());
+			}
+
+			// Write updates to the storage
+			Subscriptions::<T>::insert(&to, to_owned);
+
+			Self::deposit_event(Event::<T>::NewsFeedSubscribed {
+				newsfeed: newsfeed_id,
+				subscriber: to,
+			});
+
+			Ok(())
+		}
+
+		// Unsubscribes `from` account from the news feed.
+		// Checks if subscription exists, that the `from` account is an owner of the subscription.
+		// If news feed has an unsubscribe fee define, it transfer the fee to the news feed owner account.
+		fn do_unsubscribe(subscription_id: UniqueId, from: T::AccountId) -> DispatchResult {
+			// Get subscriptions owned by the `from` account
+			let mut from_owned = Subscriptions::<T>::get(from.clone());
+
+			// Find index of the subscription and remove it
+			if let Some(ind) = from_owned.iter().position(|s| s.id == subscription_id) {
+				let subscription = from_owned.get(ind).ok_or(Error::<T>::SubscriptionNotFound)?;
+				let newsfeed = NewsFeeds::<T>::get(subscription.newsfeed_id)
+					.ok_or(Error::<T>::NewsFeedNotFound)?;
+				// if unsubscribe fee is defined, transfer it
+				if let Some(fee) = newsfeed.unsubscribe_fee {
+					// Transfer unsubscribe fee from the `from` account to news feed owner account
+					T::Currency::transfer(
+						&from,
+						&newsfeed.owner,
+						fee,
+						frame_support::traits::ExistenceRequirement::KeepAlive,
+					)?;
+
+					Self::deposit_event(Event::<T>::NewsFeedUnsubscribeFeePaid {
+						subscriber: from.clone(),
+						owner: newsfeed.owner,
+						subscription: subscription_id,
+						price: fee,
+					});
+				} else {
+					Self::deposit_event(Event::<T>::NewsFeedNoUnsubscribeFee {
+						subscriber: from.clone(),
+						subscription: subscription_id,
+						newsfeed: newsfeed.id,
+					})
+				}
+				from_owned.swap_remove(ind);
+
+				// Write update to the storage
+				Subscriptions::<T>::insert(&from, from_owned);
+
+				Self::deposit_event(Event::<T>::NewsFeedUnsubscribed {
+					newsfeed: newsfeed.id,
+					subscriber: from,
+				});
+			} else {
+				return Err(Error::<T>::SubscriptionNotFound.into());
+			}
 
 			Ok(())
 		}
