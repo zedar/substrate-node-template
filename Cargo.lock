@@ -4705,8 +4705,10 @@ version = "0.1.0-dev"
 dependencies = [
  "frame-support",
  "frame-system",
+ "log",
  "parity-scale-codec",
  "scale-info",
+ "sp-io",
 ]
 
 [[package]]

@@ -9,9 +9,10 @@ pub mod pallet {
 	use frame_support::{
 		pallet_prelude::*,
 		sp_std,
-		traits::{Currency, Randomness},
+		traits::{Currency, Hooks, Randomness},
 	};
 	use frame_system::pallet_prelude::*;
+	use sp_io::offchain_index;
 	use sp_std::prelude::*;
 
 	#[pallet::pallet]
@@ -304,6 +305,8 @@ pub mod pallet {
 			// Subscribe to the news feed
 			Self::do_subscribe(subscription_id, newsfeed_id, subscriber)?;
 
+			let storage_key = Self::dervied_key(<frame_system::Pallet<T>>::block_number());
+
 			Ok(())
 		}
 
@@ -321,8 +324,32 @@ pub mod pallet {
 		}
 	}
 
+	#[pallet::hooks]
+	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+		// Offchain worker entry point
+		fn offchain_worker(block_number: T::BlockNumber) {
+			log::info!("News feed offchain worker: block number: {:?}", block_number);
+		}
+	}
+
+	// Prefix of the storage value used to communication with an offchain worker
+	const ONCHAIN_TX_KEY: &[u8] = b"newsfeed::indexing";
+
 	// Pallet internal functions
 	impl<T: Config> Pallet<T> {
+		// calculate a unique for the current block key that can store a value for the offchain worker
+		fn dervied_key(block_number: T::BlockNumber) -> Vec<u8> {
+			block_number.using_encoded(|encoded_bn| {
+				ONCHAIN_TX_KEY
+					.clone()
+					.into_iter()
+					.chain(b"/".into_iter())
+					.chain(encoded_bn)
+					.copied()
+					.collect::<Vec<u8>>()
+			})
+		}
+
 		// generate unique id for a new feed
 		fn new_unique_id() -> UniqueId {
 			// create randomness
