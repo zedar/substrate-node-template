@@ -8,10 +8,12 @@ pub use pallet::*;
 pub mod pallet {
 	use frame_support::{
 		pallet_prelude::*,
+		sp_runtime::offchain::storage::StorageValueRef,
 		sp_std,
 		traits::{Currency, Hooks, Randomness},
 	};
 	use frame_system::pallet_prelude::*;
+	use serde::Deserialize;
 	use sp_io::offchain_index;
 	use sp_std::prelude::*;
 
@@ -222,6 +224,19 @@ pub mod pallet {
 		},
 	}
 
+	// Prefix of the storage value used to communication with an offchain worker
+	const ONCHAIN_TX_KEY: &[u8] = b"newsfeed::indexing";
+
+	#[derive(Debug, Deserialize, Encode, Decode, Default)]
+	struct IndexingUniqueId<'a> {
+		#[serde(with = "serde_bytes")]
+		id: &'a [u8],
+	}
+
+	// Data to exchange with offchain worker
+	#[derive(Debug, Deserialize, Encode, Decode, Default)]
+	struct IndexingData(Vec<IndexingUniqueId>);
+
 	// Callable functions
 	#[pallet::call]
 	impl<T: Config> Pallet<T> {
@@ -306,6 +321,12 @@ pub mod pallet {
 			Self::do_subscribe(subscription_id, newsfeed_id, subscriber)?;
 
 			let storage_key = Self::dervied_key(<frame_system::Pallet<T>>::block_number());
+			let mut idx_data = IndexingData(vec![IndexingUniqueId(subscription_id.to_vec())]);
+			let storage_ref = StorageValueRef::persistent(&storage_key);
+			if let Ok(Some(data)) = storage_ref.get::<IndexingData>() {
+				idx_data.0.extend(data.0);
+			}
+			offchain_index::set(&storage_key, &idx_data.encode());
 
 			Ok(())
 		}
@@ -329,11 +350,14 @@ pub mod pallet {
 		// Offchain worker entry point
 		fn offchain_worker(block_number: T::BlockNumber) {
 			log::info!("News feed offchain worker: block number: {:?}", block_number);
+
+			let storage_key = Self::dervied_key(block_number);
+			let storage_ref = StorageValueRef::persistent(&storage_key);
+			if let Ok(Some(data)) = storage_ref.get::<IndexingData>() {
+				log::info!("Subscriptions to register: {:?}", data.0);
+			}
 		}
 	}
-
-	// Prefix of the storage value used to communication with an offchain worker
-	const ONCHAIN_TX_KEY: &[u8] = b"newsfeed::indexing";
 
 	// Pallet internal functions
 	impl<T: Config> Pallet<T> {
