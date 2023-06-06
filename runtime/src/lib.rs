@@ -283,6 +283,7 @@ impl pallet_offchain_worker::Config for Runtime {
 	type MaxOwnedNewsFeeds = frame_support::pallet_prelude::ConstU32<10>;
 	type MaxOwnedSubscriptions = frame_support::pallet_prelude::ConstU32<20>;
 	type MaxRegistrationUrlLength = frame_support::pallet_prelude::ConstU32<256>;
+	type MaxSubscriptionsPerBlock = frame_support::pallet_prelude::ConstU32<512>;
 	type NewsFeedRandomness = RandomnessCollectiveFlip;
 }
 

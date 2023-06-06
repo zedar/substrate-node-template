@@ -13,7 +13,7 @@ pub mod pallet {
 		traits::{Currency, Hooks, Randomness},
 	};
 	use frame_system::pallet_prelude::*;
-	use serde::Deserialize;
+	use serde::{Deserialize, Serialize};
 	use sp_io::offchain_index;
 	use sp_std::prelude::*;
 
@@ -53,6 +53,10 @@ pub mod pallet {
 		// max length of the subscription registration url
 		#[pallet::constant]
 		type MaxRegistrationUrlLength: Get<u32>;
+
+		// max number of subscriptions waiting for registration for the current block
+		#[pallet::constant]
+		type MaxSubscriptionsPerBlock: Get<u32>;
 	}
 
 	// Payment type that can be either one time or recurrent
@@ -141,6 +145,12 @@ pub mod pallet {
 		ValueQuery,
 	>;
 
+	// Queues subscriptions waiting for registrations for the current block. Multiple transactions within one block register records in this queue
+	// Block finalization removes then and sends them to the offchain index.
+	#[pallet::storage]
+	pub(super) type SubscriptionsPerBlock<T: Config> =
+		StorageValue<_, BoundedVec<UniqueId, T::MaxSubscriptionsPerBlock>, ValueQuery>;
+
 	// create_subscription creates new unique subscription
 	// - create unique id
 	// - ensure that total number of subscriptions does not exceed the maximum allowed
@@ -169,6 +179,8 @@ pub mod pallet {
 		SubscriptionNotAllowed,
 		// subscription is not assigned to a given account
 		SubscriptionNotFound,
+		// Exceeded max number of subscriptions per block
+		MaxSubscriptionsPerBlock,
 	}
 
 	// generate_deposit generates a helper function on Pallet that handles event depositing/sending
@@ -227,14 +239,15 @@ pub mod pallet {
 	// Prefix of the storage value used to communication with an offchain worker
 	const ONCHAIN_TX_KEY: &[u8] = b"newsfeed::indexing";
 
-	#[derive(Debug, Deserialize, Encode, Decode, Default)]
-	struct IndexingUniqueId<'a> {
-		#[serde(with = "serde_bytes")]
-		id: &'a [u8],
+	#[derive(Debug, Encode, Decode, Default)]
+	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
+	struct IndexingUniqueId {
+		id: Vec<u8>,
 	}
 
 	// Data to exchange with offchain worker
-	#[derive(Debug, Deserialize, Encode, Decode, Default)]
+	#[derive(Debug, Encode, Decode, Default)]
+	#[cfg_attr(feature = "std", derive(Serialize, Deserialize))]
 	struct IndexingData(Vec<IndexingUniqueId>);
 
 	// Callable functions
@@ -309,6 +322,8 @@ pub mod pallet {
 		}
 
 		// Subscribe a news feed. If newsfeed is active (price is not None) a price is transfered from the caller account to the news feed owner account
+		// We can't access offchain storage from the extrinsic, so for parallel processing we need to implement different approach:
+		// 	Collect the data in a Vec<_> storage value on chain. You remove this storage at on_finalize and store it with sp_io::offchain_index::set
 		#[pallet::weight(0)]
 		pub fn subscribe_newsfeed(origin: OriginFor<T>, newsfeed_id: UniqueId) -> DispatchResult {
 			// Ensure the caller is from a signed origin
@@ -320,13 +335,13 @@ pub mod pallet {
 			// Subscribe to the news feed
 			Self::do_subscribe(subscription_id, newsfeed_id, subscriber)?;
 
-			let storage_key = Self::dervied_key(<frame_system::Pallet<T>>::block_number());
-			let mut idx_data = IndexingData(vec![IndexingUniqueId(subscription_id.to_vec())]);
-			let storage_ref = StorageValueRef::persistent(&storage_key);
-			if let Ok(Some(data)) = storage_ref.get::<IndexingData>() {
-				idx_data.0.extend(data.0);
-			}
-			offchain_index::set(&storage_key, &idx_data.encode());
+			// Add new subscription to the queue
+			let mut queue = SubscriptionsPerBlock::<T>::get();
+			queue
+				.try_push(subscription_id)
+				.map_err(|_| Error::<T>::MaxSubscriptionsPerBlock)?;
+
+			SubscriptionsPerBlock::<T>::put(queue);
 
 			Ok(())
 		}
@@ -347,6 +362,24 @@ pub mod pallet {
 
 	#[pallet::hooks]
 	impl<T: Config> Hooks<BlockNumberFor<T>> for Pallet<T> {
+		fn on_finalize(block_number: BlockNumberFor<T>) {
+			log::info!("[News feed] block finalize: block number: {:?}", block_number);
+
+			let subscriptions = SubscriptionsPerBlock::<T>::get();
+			if !subscriptions.is_empty() {
+				let storage_key = Self::dervied_key(block_number);
+				let mut idx_data =
+					IndexingData(Vec::<IndexingUniqueId>::with_capacity(subscriptions.len()));
+				for id in subscriptions.iter() {
+					idx_data.0.push(IndexingUniqueId { id: id.to_vec() });
+				}
+
+				SubscriptionsPerBlock::<T>::kill();
+
+				offchain_index::set(&storage_key, &idx_data.encode());
+			}
+		}
+
 		// Offchain worker entry point
 		fn offchain_worker(block_number: T::BlockNumber) {
 			log::info!("News feed offchain worker: block number: {:?}", block_number);
