@@ -14,6 +14,7 @@ pub mod pallet {
 	};
 	use frame_system::pallet_prelude::*;
 	use serde::{Deserialize, Serialize};
+	use sp_core::hexdisplay;
 	use sp_io::offchain_index;
 	use sp_std::prelude::*;
 
@@ -382,12 +383,17 @@ pub mod pallet {
 
 		// Offchain worker entry point
 		fn offchain_worker(block_number: T::BlockNumber) {
-			log::info!("News feed offchain worker: block number: {:?}", block_number);
+			log::info!("[News feed] offchain worker: block number: {:?}", block_number);
 
 			let storage_key = Self::dervied_key(block_number);
 			let storage_ref = StorageValueRef::persistent(&storage_key);
 			if let Ok(Some(data)) = storage_ref.get::<IndexingData>() {
-				log::info!("Subscriptions to register: {:?}", data.0);
+				for elem in data.0.iter() {
+					log::info!(
+						"[News feed] offchain worker, subscription to register: 0x{:?}",
+						hexdisplay::HexDisplay::from(&elem.id)
+					);
+				}
 			}
 		}
 	}
